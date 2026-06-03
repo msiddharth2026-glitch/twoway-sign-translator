@@ -134,7 +134,20 @@ if mode == 'Sign Language to Text':
                 st.metric("Confidence", f"{confidence:.1f}%")
 
 else:
-    audio_file = st.audio_input("Speak now...")
+    typed_text = st.text_input("Or type text to convert to sign language:", placeholder="e.g. hello world")
+
+    if typed_text:
+        images = get_sign_images(typed_text)
+        if images:
+            st.write("**Sign representation:**")
+            cols = st.columns(min(len(images), 10))
+            for i, img in enumerate(images):
+                with cols[i % 10]:
+                        st.image(img, width=75)
+        else:
+            st.warning("No sign images available for that text.")
+
+    audio_file = st.audio_input("Or speak now...")
 
     if audio_file is not None:
         with st.spinner("Processing speech..."):
