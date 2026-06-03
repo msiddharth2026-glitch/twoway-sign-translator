@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import os
+import time
 from string import ascii_lowercase
 from gtts import gTTS
 import io
@@ -320,63 +321,243 @@ st.markdown("<h1 style='color:#4FC3F7;'>Sign & Speech Translator</h1>", unsafe_a
 mode = st.radio("Choose Mode:", ['Sign Language to Text', 'Speech to Sign'], horizontal=True)
 
 if mode == 'Sign Language to Text':
-    if 'sign_buffer' not in st.session_state:
-        st.session_state.sign_buffer = ''
-    if 'last_capture' not in st.session_state:
-        st.session_state.last_capture = None
+    import mediapipe as mp
+    from collections import Counter
 
-    st.text_area("Constructed Text", value=st.session_state.sign_buffer, height=100, disabled=True)
+    BUFFER_SIZE = 10
+    STABLE_THRESHOLD = 12
+    COOLDOWN_FRAMES = 25
+    NO_HAND_RESET = 15
 
-    col_cam, col_side = st.columns([2, 1])
+    @st.cache_resource
+    def get_hands_model():
+        return mp.solutions.hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            min_detection_confidence=0.6,
+            min_tracking_confidence=0.5,
+        )
 
-    with col_cam:
-        img_file = st.camera_input("Capture hand sign", key='cam')
+    for key, default in [
+        ('sign_buffer', ''),
+        ('cam', None),
+        ('cam_active', False),
+        ('pred_buffer', []),
+        ('conf_buffer', []),
+        ('stable_count', 0),
+        ('cooldown', 0),
+        ('cur_sign', ''),
+        ('cur_conf', 0.0),
+        ('cur_stability', 0.0),
+        ('hands_detected', 0),
+        ('hand_status', 'Waiting'),
+        ('no_hand_frames', 0),
+        ('cam_status', 'Off'),
+        ('audio_bytes', None),
+        ('last_accepted', ''),
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = default
 
-    with col_side:
-        if st.button("Speak", use_container_width=True):
-            if st.session_state.sign_buffer.strip():
-                tts = gTTS(text=st.session_state.sign_buffer, lang='en')
-                audio_bytes = io.BytesIO()
-                tts.write_to_fp(audio_bytes)
-                audio_bytes.seek(0)
-                st.audio(audio_bytes, format='audio/mp3')
-        if st.button("Space", use_container_width=True):
-            st.session_state.sign_buffer += ' '
-            st.rerun()
-        if st.button("Delete Last", use_container_width=True):
-            st.session_state.sign_buffer = st.session_state.sign_buffer[:-1]
-            st.rerun()
-        if st.button("Clear", use_container_width=True):
-            st.session_state.sign_buffer = ''
-            st.rerun()
+    st.markdown("### Live Sign Recognition")
 
-    if img_file is not None:
-        current = img_file.getvalue()
-        if current != st.session_state.last_capture:
-            st.session_state.last_capture = current
-            with st.spinner("Analyzing sign..."):
-                nparr = np.frombuffer(current, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    col_feed, col_info = st.columns([2, 1])
 
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                h, w = gray.shape
-                box_size = min(300, h, w)
-                hand = gray[0:box_size, 0:box_size]
-                resized = cv2.resize(hand, (IMG_SIZE, IMG_SIZE))
-                img_array = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
+    with col_feed:
+        frame_placeholder = st.empty()
 
-                prediction = model.predict(img_array, verbose=0)
-                index = np.argmax(prediction)
-                confidence = np.max(prediction) * 100
+    with col_info:
+        st.markdown("**Recognition Info**")
+        status_color = '🟢' if st.session_state.cam_active else '🔴'
+        st.markdown(f"**Camera:** {status_color} {st.session_state.cam_status}")
+        st.markdown(f"**Hands:** {st.session_state.hand_status}")
+        sign_display = st.session_state.cur_sign if st.session_state.cur_sign else '—'
+        st.markdown(f"**Sign:** {sign_display}")
+        conf_display = f"{st.session_state.cur_conf:.0f}%" if st.session_state.cur_conf > 0 else '—'
+        st.markdown(f"**Confidence:** {conf_display}")
+        if st.session_state.cur_stability > 0:
+            st.markdown(f"**Stability:** {st.session_state.cur_stability:.0%}")
 
-            st.image(img_file, width=150)
-            if "unknown" not in CATEGORIES[index]:
-                letter = CATEGORIES[index]
-                st.success(f"**{letter}** ({confidence:.0f}%)")
-                st.session_state.sign_buffer += letter
+    st.text_area("Generated Text", value=st.session_state.sign_buffer, height=100, disabled=True)
+
+    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+    with col_b1:
+        if st.button("▶ Start Capture", use_container_width=True):
+            cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            if cam.isOpened():
+                st.session_state.cam = cam
+                st.session_state.cam_active = True
+                st.session_state.cam_status = "Running"
+                st.session_state.pred_buffer = []
+                st.session_state.conf_buffer = []
+                st.session_state.stable_count = 0
+                st.session_state.cooldown = 0
+                st.session_state.cur_sign = ''
+                st.session_state.cur_conf = 0.0
+                st.session_state.cur_stability = 0.0
+                st.session_state.last_accepted = ''
+                st.session_state.hand_status = "Initializing"
                 st.rerun()
             else:
-                st.info(f"Unknown sign ({confidence:.0f}%)")
+                st.error("Could not open camera")
+                cam.release()
+
+    with col_b2:
+        if st.button("⏹ Stop Capture", use_container_width=True):
+            st.session_state.cam_active = False
+            if st.session_state.cam:
+                st.session_state.cam.release()
+                st.session_state.cam = None
+            st.session_state.cam_status = "Off"
+            st.session_state.hand_status = "Stopped"
+            st.session_state.cur_sign = ''
+            st.session_state.cur_conf = 0.0
+            st.session_state.cur_stability = 0.0
+            st.session_state.pred_buffer = []
+            st.session_state.conf_buffer = []
+            st.rerun()
+
+    with col_b3:
+        if st.button("🗑 Clear", use_container_width=True):
+            st.session_state.sign_buffer = ''
+            st.session_state.audio_bytes = None
+            st.rerun()
+
+    with col_b4:
+        if st.button("🔊 Speak", use_container_width=True):
+            if st.session_state.sign_buffer.strip():
+                tts = gTTS(text=st.session_state.sign_buffer, lang='en')
+                buf = io.BytesIO()
+                tts.write_to_fp(buf)
+                buf.seek(0)
+                st.session_state.audio_bytes = buf.getvalue()
+
+    if st.session_state.audio_bytes:
+        st.audio(st.session_state.audio_bytes, format='audio/mp3')
+
+    if st.session_state.cam_active and st.session_state.cam and st.session_state.cam.isOpened():
+        ret, frame = st.session_state.cam.read()
+        if not ret:
+            st.session_state.cam_status = "Frame error"
+            time.sleep(0.05)
+            st.rerun()
+
+        hands = get_hands_model()
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = hands.process(rgb)
+        h, w, _ = frame.shape
+
+        if result.multi_hand_landmarks:
+            num_hands = len(result.multi_hand_landmarks)
+            st.session_state.hands_detected = num_hands
+            st.session_state.no_hand_frames = 0
+
+            mp_drawing = mp.solutions.drawing_utils
+            hand_boxes = []
+            all_x, all_y = []
+
+            for landmarks in result.multi_hand_landmarks:
+                xs = [lm.x * w for lm in landmarks.landmark]
+                ys = [lm.y * h for lm in landmarks.landmark]
+                all_x.extend(xs)
+                all_y.extend(ys)
+                area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+                hand_boxes.append((min(xs), min(ys), max(xs), max(ys), area, landmarks))
+
+                mp_drawing.draw_landmarks(
+                    frame, landmarks, mp.solutions.hands.HAND_CONNECTIONS,
+                    mp_drawing.DrawingSpec(color=(79, 195, 247), thickness=1, circle_radius=2),
+                    mp_drawing.DrawingSpec(color=(2, 136, 209), thickness=1),
+                )
+
+            pad = 25
+            bx1 = max(0, int(min(all_x) - pad))
+            by1 = max(0, int(min(all_y) - pad))
+            bx2 = min(w, int(max(all_x) + pad))
+            by2 = min(h, int(max(all_y) + pad))
+            cv2.rectangle(frame, (bx1, by1), (bx2, by2), (79, 195, 247), 3)
+            status_label = f"Detected ({num_hands} hand{'s' if num_hands > 1 else ''})"
+            st.session_state.hand_status = status_label
+            cv2.putText(frame, status_label, (bx1, by1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (79, 195, 247), 2)
+
+            dominant = max(hand_boxes, key=lambda b: b[4])
+            dom_lm = dominant[5]
+
+            dxs = [lm.x * w for lm in dom_lm.landmark]
+            dys = [lm.y * h for lm in dom_lm.landmark]
+            hx1 = max(0, int(min(dxs) - pad))
+            hy1 = max(0, int(min(dys) - pad))
+            hx2 = min(w, int(max(dxs) + pad))
+            hy2 = min(h, int(max(dys) + pad))
+
+            hand_roi = frame[hy1:hy2, hx1:hx2]
+            if hand_roi.size > 0:
+                gray = cv2.cvtColor(hand_roi, cv2.COLOR_BGR2GRAY)
+                resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
+                img_array = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
+
+                pred = model.predict(img_array, verbose=0)
+                idx = np.argmax(pred)
+                conf = np.max(pred) * 100
+
+                if "unknown" not in CATEGORIES[idx]:
+                    pred_class = CATEGORIES[idx]
+
+                    st.session_state.pred_buffer.append(pred_class)
+                    st.session_state.conf_buffer.append(conf)
+                    if len(st.session_state.pred_buffer) > BUFFER_SIZE:
+                        st.session_state.pred_buffer.pop(0)
+                        st.session_state.conf_buffer.pop(0)
+
+                    buf = st.session_state.pred_buffer
+                    if len(buf) >= max(3, BUFFER_SIZE // 2):
+                        counter = Counter(buf)
+                        top_class, top_count = counter.most_common(1)[0]
+                        stability = top_count / len(buf)
+                        indices = [i for i, c in enumerate(buf) if c == top_class]
+                        avg_conf = np.mean([st.session_state.conf_buffer[i] for i in indices])
+
+                        st.session_state.cur_sign = top_class
+                        st.session_state.cur_conf = float(avg_conf)
+                        st.session_state.cur_stability = float(stability)
+
+                        if st.session_state.cooldown > 0:
+                            st.session_state.cooldown -= 1
+                        elif top_class == st.session_state.last_accepted:
+                            st.session_state.stable_count = 0
+                        elif stability >= 0.6:
+                            st.session_state.stable_count += 1
+                            if st.session_state.stable_count >= STABLE_THRESHOLD and avg_conf > 50:
+                                st.session_state.sign_buffer += top_class
+                                st.session_state.last_accepted = top_class
+                                st.session_state.cooldown = COOLDOWN_FRAMES
+                                st.session_state.stable_count = 0
+                        else:
+                            st.session_state.stable_count = 0
+                else:
+                    st.session_state.cur_sign = ''
+                    st.session_state.cur_conf = 0.0
+                    st.session_state.stable_count = 0
+        else:
+            st.session_state.hands_detected = 0
+            st.session_state.hand_status = "No hands"
+            st.session_state.no_hand_frames += 1
+            st.session_state.pred_buffer = []
+            st.session_state.conf_buffer = []
+            st.session_state.stable_count = 0
+            st.session_state.cur_sign = ''
+            st.session_state.cur_conf = 0.0
+            st.session_state.cur_stability = 0.0
+
+            if st.session_state.no_hand_frames >= NO_HAND_RESET:
+                st.session_state.last_accepted = ''
+                st.session_state.cooldown = 0
+
+        st.session_state.cam_status = "Running"
+        frame_placeholder.image(frame, channels="BGR", use_container_width=True)
+        time.sleep(0.03)
+        st.rerun()
 
 else:
     typed_text = st.text_input("Or type text to convert to sign language:", placeholder="e.g. hello world")
