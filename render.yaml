@@ -5,6 +5,5 @@ services:
     repo: https://github.com/msiddharth2026-glitch/twoway-sign-translator
     plan: free
     region: oregon
-    pythonVersion: 3.11.0
-    buildCommand: pip install -r requirements.txt
+    buildCommand: poetry install --no-dev
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
