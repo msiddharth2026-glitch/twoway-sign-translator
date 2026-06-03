@@ -32,6 +32,60 @@ USE_GITHUB = bool(GITHUB_TOKEN and GITHUB_REPO)
 
 st.set_page_config(page_title="Sign & Speech Translator", layout="centered")
 
+st.markdown("""
+<style>
+    .stApp { background-color: #0E1117; }
+    .stButton>button {
+        background: linear-gradient(135deg, #4FC3F7, #0288D1);
+        color: white !important;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        transition: all 0.3s;
+    }
+    .stButton>button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(79, 195, 247, 0.4);
+    }
+    div[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0E1117, #1E2230);
+        border-right: 1px solid #2A2F3E;
+    }
+    div[data-testid="stSidebar"] .stButton>button {
+        background: linear-gradient(135deg, #FF5252, #D32F2F);
+    }
+    div[data-testid="stSidebar"] .stButton>button:hover {
+        box-shadow: 0 4px 12px rgba(255, 82, 82, 0.4);
+    }
+    .stTextInput>div>div>input, .stTextArea>div>div>textarea {
+        background-color: #1E2230 !important;
+        color: #E0E0E0 !important;
+        border: 1px solid #2A2F3E !important;
+        border-radius: 6px;
+    }
+    div.stTabs button {
+        color: #888 !important;
+        font-weight: 600;
+    }
+    div.stTabs button[aria-selected="true"] {
+        color: #4FC3F7 !important;
+        border-bottom: 2px solid #4FC3F7;
+    }
+    .stRadio>label {
+        color: #E0E0E0 !important;
+    }
+    div[data-testid="stImage"] {
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #2A2F3E;
+    }
+    .stSuccess, .stError, .stInfo {
+        border-radius: 8px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'username' not in st.session_state:
@@ -168,7 +222,7 @@ def get_categories():
     return cats
 
 if not st.session_state.authenticated:
-    st.markdown("<h1 style='color:#3498db;'>Sign & Speech Translator</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color:#4FC3F7;'>Sign & Speech Translator</h1>", unsafe_allow_html=True)
     st.markdown("### Login or Register to continue")
 
     tab1, tab2 = st.tabs(["Login", "Register"])
@@ -261,7 +315,7 @@ def get_sign_images(text):
             images.append(img)
     return images
 
-st.markdown("<h1 style='color:#3498db;'>Sign & Speech Translator</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='color:#4FC3F7;'>Sign & Speech Translator</h1>", unsafe_allow_html=True)
 
 mode = st.radio("Choose Mode:", ['Sign Language to Text', 'Speech to Sign'], horizontal=True)
 
