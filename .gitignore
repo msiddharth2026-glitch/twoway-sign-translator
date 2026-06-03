@@ -1,0 +1,7 @@
+.venv/
+.idea/
+__pycache__/
+*.pyc
+*.pickle
+*.mp3
+dataset/original_images/
