@@ -20,14 +20,23 @@ TEST_DIR = 'test'
 
 @st.cache_resource
 def load_model():
-    return tf.keras.models.load_model(MODEL_PATH)
+    m = tf.keras.models.load_model(MODEL_PATH)
+    return m
 
 @st.cache_data
 def get_categories():
-    return sorted([d for d in os.listdir(DATADIR) if not d.startswith('.')])
+    cats = sorted([d for d in os.listdir(DATADIR) if not d.startswith('.')])
+    if not cats:
+        st.warning("No categories found in dataset/ directory")
+    return cats
 
-model = load_model()
-CATEGORIES = get_categories()
+try:
+    model = load_model()
+    CATEGORIES = get_categories()
+    st.sidebar.success(f"Model loaded: {len(CATEGORIES)} categories")
+except Exception as e:
+    st.error(f"Failed to load model: {e}")
+    st.stop()
 
 LETTERS = {letter: str(index) for index, letter in enumerate(ascii_lowercase, start=1)}
 
