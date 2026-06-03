@@ -20,6 +20,10 @@ MODEL_PATH = 'CNN.model'
 TEST_DIR = 'test'
 USERS_FILE = 'users.json'
 
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
+USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_ANON_KEY)
+
 st.set_page_config(page_title="Sign & Speech Translator", layout="centered")
 
 if 'authenticated' not in st.session_state:
@@ -30,15 +34,74 @@ if 'username' not in st.session_state:
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def load_users():
+def _supabase_get(username=None):
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/users?select=username,password_hash"
+    if username:
+        url += f"&username=eq.{parse.quote(username)}"
+    req = request.Request(url, headers={
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': f'Bearer {SUPABASE_ANON_KEY}',
+    }, method='GET')
+    try:
+        resp = request.urlopen(req, timeout=10)
+        return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+def _supabase_post(data):
+    req = request.Request(
+        f"{SUPABASE_URL.rstrip('/')}/rest/v1/users",
+        data=json.dumps(data).encode(),
+        headers={
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': f'Bearer {SUPABASE_ANON_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation',
+        },
+        method='POST',
+    )
+    try:
+        resp = request.urlopen(req, timeout=10)
+        return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+def authenticate_user(username, password):
+    pwd_hash = hash_password(password)
+    if USE_SUPABASE:
+        result = _supabase_get(username)
+        if result and len(result) > 0:
+            return result[0]['password_hash'] == pwd_hash
+        return False
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE) as f:
-            return json.load(f)
-    return {}
+            users = json.load(f)
+        return username in users and users[username] == pwd_hash
+    return False
 
-def save_users(users):
+def register_user(username, password):
+    if not username or not password:
+        return False, "Please fill all fields"
+    if len(password) < 4:
+        return False, "Password must be at least 4 characters"
+    if USE_SUPABASE:
+        existing = _supabase_get(username)
+        if existing and len(existing) > 0:
+            return False, "Username already exists"
+        result = _supabase_post([{'username': username, 'password_hash': hash_password(password)}])
+        if result:
+            return True, "Registration successful! Please login."
+        return False, "Registration failed. Check database connection."
+    users = {}
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE) as f:
+            users = json.load(f)
+    if username in users:
+        return False, "Username already exists"
+    users[username] = hash_password(password)
     with open(USERS_FILE, 'w') as f:
         json.dump(users, f)
+    return True, "Registration successful! Please login."
 
 @st.cache_resource
 def load_model():
@@ -60,8 +123,7 @@ if not st.session_state.authenticated:
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
             if st.form_submit_button("Login"):
-                users = load_users()
-                if username in users and users[username] == hash_password(password):
+                if authenticate_user(username, password):
                     st.session_state.authenticated = True
                     st.session_state.username = username
                     st.rerun()
@@ -74,20 +136,14 @@ if not st.session_state.authenticated:
             reg_pass = st.text_input("Choose Password", type="password")
             reg_confirm = st.text_input("Confirm Password", type="password")
             if st.form_submit_button("Register"):
-                if not reg_user or not reg_pass:
-                    st.error("Please fill all fields")
-                elif reg_pass != reg_confirm:
+                if reg_pass != reg_confirm:
                     st.error("Passwords do not match")
-                elif len(reg_pass) < 4:
-                    st.error("Password must be at least 4 characters")
                 else:
-                    users = load_users()
-                    if reg_user in users:
-                        st.error("Username already exists")
+                    ok, msg = register_user(reg_user, reg_pass)
+                    if ok:
+                        st.success(msg)
                     else:
-                        users[reg_user] = hash_password(reg_pass)
-                        save_users(users)
-                        st.success("Registration successful! Please login.")
+                        st.error(msg)
 
     st.stop()
 
@@ -133,9 +189,11 @@ def translate_text(text, dest='ta'):
 
 def get_sign_images(text):
     images = []
+    blank = Image.new('RGB', (150, 150), color=(255, 255, 255))
     for char in text:
         if char == " ":
-            img_path = os.path.join(TEST_DIR, 'space.png')
+            images.append(blank)
+            continue
         elif char.lower() in LETTERS:
             pos = alphabet_position(char)[0] if alphabet_position(char) else None
             if pos is None:
@@ -158,7 +216,7 @@ if mode == 'Sign Language to Text':
     if 'last_capture' not in st.session_state:
         st.session_state.last_capture = None
 
-    st.text_area("Constructed Text", value=st.session_state.sign_buffer, height=100)
+    st.text_area("Constructed Text", value=st.session_state.sign_buffer, height=100, disabled=True)
 
     col_cam, col_side = st.columns([2, 1])
 
