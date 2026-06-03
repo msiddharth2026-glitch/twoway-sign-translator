@@ -10,7 +10,9 @@ from PIL import Image
 import speech_recognition as sr
 import tempfile
 import json
+import base64
 from urllib import request, parse
+from urllib.error import HTTPError
 from pydub import AudioSegment
 import hashlib
 
@@ -23,6 +25,10 @@ USERS_FILE = 'users.json'
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
 USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_ANON_KEY)
+
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+GITHUB_REPO = os.environ.get('GITHUB_REPO', '')
+USE_GITHUB = bool(GITHUB_TOKEN and GITHUB_REPO)
 
 st.set_page_config(page_title="Sign & Speech Translator", layout="centered")
 
@@ -66,42 +72,91 @@ def _supabase_post(data):
     except Exception:
         return None
 
-def authenticate_user(username, password):
-    pwd_hash = hash_password(password)
-    if USE_SUPABASE:
-        result = _supabase_get(username)
-        if result and len(result) > 0:
-            return result[0]['password_hash'] == pwd_hash
+def _github_read_users():
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/users.json"
+    req = request.Request(url, headers={
+        'Authorization': f'Bearer {GITHUB_TOKEN}',
+        'Accept': 'application/vnd.github.v3+json',
+    })
+    try:
+        resp = request.urlopen(req, timeout=10)
+        data = json.loads(resp.read().decode())
+        content = base64.b64decode(data['content']).decode()
+        return json.loads(content), data['sha']
+    except HTTPError as e:
+        if e.code == 404:
+            return {}, None
+        return None, None
+
+def _github_write_users(users, sha):
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/users.json"
+    content = base64.b64encode(json.dumps(users).encode()).decode()
+    body = json.dumps({'message': 'update users', 'content': content, 'sha': sha})
+    req = request.Request(url, data=body.encode(), headers={
+        'Authorization': f'Bearer {GITHUB_TOKEN}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github.v3+json',
+    }, method='PUT')
+    try:
+        request.urlopen(req, timeout=10)
+        return True
+    except Exception:
         return False
+
+def _get_users():
+    if USE_SUPABASE:
+        result = _supabase_get()
+        if result is not None:
+            return {u['username']: u['password_hash'] for u in result}
+    if USE_GITHUB:
+        users, _ = _github_read_users()
+        if users is not None:
+            return users
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE) as f:
+            return json.load(f)
+    return {}
+
+def _save_user(username, password_hash):
+    if USE_SUPABASE:
+        existing = _supabase_get(username)
+        if existing and len(existing) > 0:
+            return False
+        result = _supabase_post([{'username': username, 'password_hash': password_hash}])
+        return result is not None
+    if USE_GITHUB:
+        users, sha = _github_read_users()
+        if users is None:
+            return False
+        if username in users:
+            return False
+        users[username] = password_hash
+        return _github_write_users(users, sha)
+    users = {}
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE) as f:
             users = json.load(f)
-        return username in users and users[username] == pwd_hash
-    return False
+    if username in users:
+        return False
+    users[username] = password_hash
+    with open(USERS_FILE, 'w') as f:
+        json.dump(users, f)
+    return True
+
+def authenticate_user(username, password):
+    if not username or not password:
+        return False
+    users = _get_users()
+    return username in users and users[username] == hash_password(password)
 
 def register_user(username, password):
     if not username or not password:
         return False, "Please fill all fields"
     if len(password) < 4:
         return False, "Password must be at least 4 characters"
-    if USE_SUPABASE:
-        existing = _supabase_get(username)
-        if existing and len(existing) > 0:
-            return False, "Username already exists"
-        result = _supabase_post([{'username': username, 'password_hash': hash_password(password)}])
-        if result:
-            return True, "Registration successful! Please login."
-        return False, "Registration failed. Check database connection."
-    users = {}
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE) as f:
-            users = json.load(f)
-    if username in users:
-        return False, "Username already exists"
-    users[username] = hash_password(password)
-    with open(USERS_FILE, 'w') as f:
-        json.dump(users, f)
-    return True, "Registration successful! Please login."
+    if _save_user(username, hash_password(password)):
+        return True, "Registration successful! Please login."
+    return False, "Username already exists"
 
 @st.cache_resource
 def load_model():
