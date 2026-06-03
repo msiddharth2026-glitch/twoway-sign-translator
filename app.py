@@ -153,51 +153,63 @@ st.markdown("<h1 style='color:#3498db;'>Sign & Speech Translator</h1>", unsafe_a
 mode = st.radio("Choose Mode:", ['Sign Language to Text', 'Speech to Sign'], horizontal=True)
 
 if mode == 'Sign Language to Text':
-    img_file = st.camera_input("Capture your hand sign")
+    if 'sign_buffer' not in st.session_state:
+        st.session_state.sign_buffer = ''
+    if 'last_capture' not in st.session_state:
+        st.session_state.last_capture = None
+
+    st.text_area("Constructed Text", value=st.session_state.sign_buffer, height=100)
+
+    col_cam, col_side = st.columns([2, 1])
+
+    with col_cam:
+        img_file = st.camera_input("Capture hand sign", key='cam')
+
+    with col_side:
+        if st.button("Speak", use_container_width=True):
+            if st.session_state.sign_buffer.strip():
+                tts = gTTS(text=st.session_state.sign_buffer, lang='en')
+                audio_bytes = io.BytesIO()
+                tts.write_to_fp(audio_bytes)
+                audio_bytes.seek(0)
+                st.audio(audio_bytes, format='audio/mp3')
+        if st.button("Space", use_container_width=True):
+            st.session_state.sign_buffer += ' '
+            st.rerun()
+        if st.button("Delete Last", use_container_width=True):
+            st.session_state.sign_buffer = st.session_state.sign_buffer[:-1]
+            st.rerun()
+        if st.button("Clear", use_container_width=True):
+            st.session_state.sign_buffer = ''
+            st.rerun()
 
     if img_file is not None:
-        with st.spinner("Analyzing sign..."):
-            bytes_data = img_file.getvalue()
-            nparr = np.frombuffer(bytes_data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        current = img_file.getvalue()
+        if current != st.session_state.last_capture:
+            st.session_state.last_capture = current
+            with st.spinner("Analyzing sign..."):
+                nparr = np.frombuffer(current, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            h, w = gray.shape
-            box_size = min(300, h, w)
-            hand = gray[0:box_size, 0:box_size]
-            resized = cv2.resize(hand, (IMG_SIZE, IMG_SIZE))
-            img_array = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                h, w = gray.shape
+                box_size = min(300, h, w)
+                hand = gray[0:box_size, 0:box_size]
+                resized = cv2.resize(hand, (IMG_SIZE, IMG_SIZE))
+                img_array = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
 
-            prediction = model.predict(img_array, verbose=0)
-            index = np.argmax(prediction)
-            confidence = np.max(prediction) * 100
+                prediction = model.predict(img_array, verbose=0)
+                index = np.argmax(prediction)
+                confidence = np.max(prediction) * 100
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(img_file, caption="Captured Image", width=250)
-
-        with col2:
-            if "unknown" not in CATEGORIES[index] and index < len(DET_PHRASES):
-                text = DET_PHRASES[index]
-                st.success(f"**Sign:** {CATEGORIES[index]}")
-                st.info(f"**Detected:** {text}")
-                st.metric("Confidence", f"{confidence:.1f}%")
-
-                with st.spinner("Translating to Tamil..."):
-                    try:
-                        translated = translate_text(text)
-                        st.write(f"**Tamil:** {translated}")
-
-                        tts = gTTS(text=translated, lang='ta')
-                        audio_bytes = io.BytesIO()
-                        tts.write_to_fp(audio_bytes)
-                        audio_bytes.seek(0)
-                        st.audio(audio_bytes, format='audio/mp3')
-                    except Exception as e:
-                        st.error(f"Translation/audio error: {e}")
+            st.image(img_file, width=150)
+            if "unknown" not in CATEGORIES[index]:
+                letter = CATEGORIES[index]
+                st.success(f"**{letter}** ({confidence:.0f}%)")
+                st.session_state.sign_buffer += letter
+                st.rerun()
             else:
-                st.info(f"**Sign detected:** {CATEGORIES[index]}")
-                st.metric("Confidence", f"{confidence:.1f}%")
+                st.info(f"Unknown sign ({confidence:.0f}%)")
 
 else:
     typed_text = st.text_input("Or type text to convert to sign language:", placeholder="e.g. hello world")
