@@ -24,7 +24,7 @@ def load_model():
 
 @st.cache_data
 def get_categories():
-    return sorted(os.listdir(DATADIR))
+    return sorted([d for d in os.listdir(DATADIR) if not d.startswith('.')])
 
 model = load_model()
 CATEGORIES = get_categories()
