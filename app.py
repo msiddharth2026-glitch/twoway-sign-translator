@@ -12,23 +12,84 @@ import tempfile
 import json
 from urllib import request, parse
 from pydub import AudioSegment
+import hashlib
 
 IMG_SIZE = 50
 DATADIR = 'dataset'
 MODEL_PATH = 'CNN.model'
 TEST_DIR = 'test'
+USERS_FILE = 'users.json'
+
+st.set_page_config(page_title="Sign & Speech Translator", layout="centered")
+
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'username' not in st.session_state:
+    st.session_state.username = ''
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE) as f:
+            return json.load(f)
+    return {}
+
+def save_users(users):
+    with open(USERS_FILE, 'w') as f:
+        json.dump(users, f)
 
 @st.cache_resource
 def load_model():
-    m = tf.keras.models.load_model(MODEL_PATH)
-    return m
+    return tf.keras.models.load_model(MODEL_PATH)
 
 @st.cache_data
 def get_categories():
     cats = sorted([d for d in os.listdir(DATADIR) if not d.startswith('.')])
-    if not cats:
-        st.warning("No categories found in dataset/ directory")
     return cats
+
+if not st.session_state.authenticated:
+    st.markdown("<h1 style='color:#3498db;'>Sign & Speech Translator</h1>", unsafe_allow_html=True)
+    st.markdown("### Login or Register to continue")
+
+    tab1, tab2 = st.tabs(["Login", "Register"])
+
+    with tab1:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            if st.form_submit_button("Login"):
+                users = load_users()
+                if username in users and users[username] == hash_password(password):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password")
+
+    with tab2:
+        with st.form("register_form"):
+            reg_user = st.text_input("Choose Username")
+            reg_pass = st.text_input("Choose Password", type="password")
+            reg_confirm = st.text_input("Confirm Password", type="password")
+            if st.form_submit_button("Register"):
+                if not reg_user or not reg_pass:
+                    st.error("Please fill all fields")
+                elif reg_pass != reg_confirm:
+                    st.error("Passwords do not match")
+                elif len(reg_pass) < 4:
+                    st.error("Password must be at least 4 characters")
+                else:
+                    users = load_users()
+                    if reg_user in users:
+                        st.error("Username already exists")
+                    else:
+                        users[reg_user] = hash_password(reg_pass)
+                        save_users(users)
+                        st.success("Registration successful! Please login.")
+
+    st.stop()
 
 try:
     model = load_model()
@@ -37,6 +98,12 @@ try:
 except Exception as e:
     st.error(f"Failed to load model: {e}")
     st.stop()
+
+st.sidebar.write(f"**{st.session_state.username}**")
+if st.sidebar.button("Logout"):
+    st.session_state.authenticated = False
+    st.session_state.username = ''
+    st.rerun()
 
 LETTERS = {letter: str(index) for index, letter in enumerate(ascii_lowercase, start=1)}
 
@@ -81,7 +148,6 @@ def get_sign_images(text):
             images.append(img)
     return images
 
-st.set_page_config(page_title="Sign & Speech Translator", layout="centered")
 st.markdown("<h1 style='color:#3498db;'>Sign & Speech Translator</h1>", unsafe_allow_html=True)
 
 mode = st.radio("Choose Mode:", ['Sign Language to Text', 'Speech to Sign'], horizontal=True)
