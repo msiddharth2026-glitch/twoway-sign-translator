@@ -363,64 +363,77 @@ if mode == 'Sign Language to Text':
         def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
             img = frame.to_ndarray(format="bgr24")
             try:
-                hands = self._get_hands()
-                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                result = hands.process(rgb)
+                if not hasattr(self, '_frame_count'):
+                    self._frame_count = 0
+                self._frame_count += 1
+
                 h, w, _ = img.shape
                 pred_class = None
                 conf = 0.0
                 num_hands = 0
 
-                if result.multi_hand_landmarks:
-                    num_hands = len(result.multi_hand_landmarks)
-                    hand_boxes = []
-                    all_x, all_y = [], []
-                    mp_drawing = mp.solutions.drawing_utils
-                    for lm in result.multi_hand_landmarks:
-                        xs = [l.x * w for l in lm.landmark]
-                        ys = [l.y * h for l in lm.landmark]
-                        all_x.extend(xs); all_y.extend(ys)
-                        area = (max(xs) - min(xs)) * (max(ys) - min(ys))
-                        hand_boxes.append((min(xs), min(ys), max(xs), max(ys), area, lm))
-                        mp_drawing.draw_landmarks(
-                            img, lm, mp.solutions.hands.HAND_CONNECTIONS,
-                            mp_drawing.DrawingSpec(color=(79, 195, 247), thickness=1, circle_radius=2),
-                            mp_drawing.DrawingSpec(color=(2, 136, 209), thickness=1),
-                        )
-                    pad = 25
-                    bx1 = max(0, int(min(all_x) - pad))
-                    by1 = max(0, int(min(all_y) - pad))
-                    bx2 = min(w, int(max(all_x) + pad))
-                    by2 = min(h, int(max(all_y) + pad))
-                    cv2.rectangle(img, (bx1, by1), (bx2, by2), (79, 195, 247), 3)
-                    label = f"Detected ({num_hands})"
-                    cv2.putText(img, label, (bx1, by1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (79, 195, 247), 2)
+                if self._frame_count % 3 == 1:
+                    hands = self._get_hands()
+                    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    self._last_result = hands.process(rgb)
+                    self._last_img = img.copy()
 
-                    if not hasattr(self, '_frame_count'):
-                        self._frame_count = 0
-                    self._frame_count += 1
+                result = getattr(self, '_last_result', None)
+                if result is None:
+                    with self.lock:
+                        self._hand_count = 0
+                    return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-                    if self._frame_count % 5 == 1:
-                        dominant = max(hand_boxes, key=lambda b: b[4])
-                        dom = dominant[5]
-                        dxs = [l.x * w for l in dom.landmark]
-                        dys = [l.y * h for l in dom.landmark]
-                        hx1 = max(0, int(min(dxs) - pad))
-                        hy1 = max(0, int(min(dys) - pad))
-                        hx2 = min(w, int(max(dxs) + pad))
-                        hy2 = min(h, int(max(dys) + pad))
-                        roi = img[hy1:hy2, hx1:hx2]
-                        if roi.size > 0:
-                            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                            resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
-                            arr = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
-                            m = load_model()
-                            cats = get_categories()
-                            pred = m.predict(arr, verbose=0)
-                            idx = np.argmax(pred)
-                            conf = float(np.max(pred) * 100)
-                            if "unknown" not in cats[idx]:
-                                pred_class = cats[idx]
+                if not result.multi_hand_landmarks:
+                    with self.lock:
+                        self._hand_count = 0
+                    return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+                num_hands = len(result.multi_hand_landmarks)
+                hand_boxes = []
+                all_x, all_y = [], []
+                mp_drawing = mp.solutions.drawing_utils
+                for lm in result.multi_hand_landmarks:
+                    xs = [l.x * w for l in lm.landmark]
+                    ys = [l.y * h for l in lm.landmark]
+                    all_x.extend(xs); all_y.extend(ys)
+                    area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+                    hand_boxes.append((min(xs), min(ys), max(xs), max(ys), area, lm))
+                    mp_drawing.draw_landmarks(
+                        img, lm, mp.solutions.hands.HAND_CONNECTIONS,
+                        mp_drawing.DrawingSpec(color=(79, 195, 247), thickness=1, circle_radius=2),
+                        mp_drawing.DrawingSpec(color=(2, 136, 209), thickness=1),
+                    )
+                pad = 25
+                bx1 = max(0, int(min(all_x) - pad))
+                by1 = max(0, int(min(all_y) - pad))
+                bx2 = min(w, int(max(all_x) + pad))
+                by2 = min(h, int(max(all_y) + pad))
+                cv2.rectangle(img, (bx1, by1), (bx2, by2), (79, 195, 247), 3)
+                label = f"Detected ({num_hands})"
+                cv2.putText(img, label, (bx1, by1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (79, 195, 247), 2)
+
+                if self._frame_count % 5 == 1:
+                    dominant = max(hand_boxes, key=lambda b: b[4])
+                    dom = dominant[5]
+                    dxs = [l.x * w for l in dom.landmark]
+                    dys = [l.y * h for l in dom.landmark]
+                    hx1 = max(0, int(min(dxs) - pad))
+                    hy1 = max(0, int(min(dys) - pad))
+                    hx2 = min(w, int(max(dxs) + pad))
+                    hy2 = min(h, int(max(dys) + pad))
+                    roi = img[hy1:hy2, hx1:hx2]
+                    if roi.size > 0:
+                        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                        resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
+                        arr = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
+                        m = load_model()
+                        cats = get_categories()
+                        pred = m.predict(arr, verbose=0)
+                        idx = np.argmax(pred)
+                        conf = float(np.max(pred) * 100)
+                        if "unknown" not in cats[idx]:
+                            pred_class = cats[idx]
 
                 with self.lock:
                     self._hand_count = num_hands
@@ -453,7 +466,14 @@ if mode == 'Sign Language to Text':
                 video_processor_factory=SignVideoProcessor,
                 mode=WebRtcMode.SENDRECV,
                 desired_playing_state=st.session_state.desired_playing,
-                media_stream_constraints={"video": True, "audio": False},
+                media_stream_constraints={
+                    "video": {
+                        "width": {"ideal": 480},
+                        "height": {"ideal": 360},
+                        "frameRate": {"ideal": 15},
+                    },
+                    "audio": False,
+                },
                 rtc_configuration={
                     "iceServers": [
                         {"urls": ["stun:stun.l.google.com:19302"]},
@@ -571,8 +591,16 @@ if mode == 'Sign Language to Text':
                     else:
                         st.session_state.stable_count = 0
 
-            time.sleep(0.3)
-            st.rerun()
+            now = time.time()
+            sig = (num_hands, pred_class, int(conf), len(st.session_state.sign_buffer))
+            prev_sig = st.session_state.get('_prev_sig')
+            last_rerun = st.session_state.get('_last_rerun', 0)
+            st.session_state._prev_sig = sig
+            needs_rerun = (sig != prev_sig) or (now - last_rerun > 1.0)
+            if needs_rerun:
+                st.session_state._last_rerun = now
+                time.sleep(0.2)
+                st.rerun()
     elif st.session_state.desired_playing:
         st.session_state.cam_status = "Connecting..."
         if 'connect_attempts' not in st.session_state:
