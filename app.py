@@ -339,10 +339,10 @@ if mode == 'Sign Language to Text':
     from collections import Counter
     from streamlit_webrtc import webrtc_streamer, WebRtcMode
 
-    BUFFER_SIZE = 10
-    STABLE_THRESHOLD = 12
-    COOLDOWN_FRAMES = 25
-    NO_HAND_RESET = 15
+    BUFFER_SIZE = 8
+    STABLE_THRESHOLD = 6
+    COOLDOWN_FRAMES = 8
+    NO_HAND_RESET = 5
 
     class SignVideoProcessor:
         def __init__(self):
@@ -364,8 +364,6 @@ if mode == 'Sign Language to Text':
             img = frame.to_ndarray(format="bgr24")
             try:
                 hands = self._get_hands()
-                m = load_model()
-                cats = get_categories()
                 rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 result = hands.process(rgb)
                 h, w, _ = img.shape
@@ -397,29 +395,38 @@ if mode == 'Sign Language to Text':
                     cv2.rectangle(img, (bx1, by1), (bx2, by2), (79, 195, 247), 3)
                     label = f"Detected ({num_hands})"
                     cv2.putText(img, label, (bx1, by1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (79, 195, 247), 2)
-                    dominant = max(hand_boxes, key=lambda b: b[4])
-                    dom = dominant[5]
-                    dxs = [l.x * w for l in dom.landmark]
-                    dys = [l.y * h for l in dom.landmark]
-                    hx1 = max(0, int(min(dxs) - pad))
-                    hy1 = max(0, int(min(dys) - pad))
-                    hx2 = min(w, int(max(dxs) + pad))
-                    hy2 = min(h, int(max(dys) + pad))
-                    roi = img[hy1:hy2, hx1:hx2]
-                    if roi.size > 0:
-                        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                        resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
-                        arr = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
-                        pred = m.predict(arr, verbose=0)
-                        idx = np.argmax(pred)
-                        conf = float(np.max(pred) * 100)
-                        if "unknown" not in cats[idx]:
-                            pred_class = cats[idx]
+
+                    if not hasattr(self, '_frame_count'):
+                        self._frame_count = 0
+                    self._frame_count += 1
+
+                    if self._frame_count % 5 == 1:
+                        dominant = max(hand_boxes, key=lambda b: b[4])
+                        dom = dominant[5]
+                        dxs = [l.x * w for l in dom.landmark]
+                        dys = [l.y * h for l in dom.landmark]
+                        hx1 = max(0, int(min(dxs) - pad))
+                        hy1 = max(0, int(min(dys) - pad))
+                        hx2 = min(w, int(max(dxs) + pad))
+                        hy2 = min(h, int(max(dys) + pad))
+                        roi = img[hy1:hy2, hx1:hx2]
+                        if roi.size > 0:
+                            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                            resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
+                            arr = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
+                            m = load_model()
+                            cats = get_categories()
+                            pred = m.predict(arr, verbose=0)
+                            idx = np.argmax(pred)
+                            conf = float(np.max(pred) * 100)
+                            if "unknown" not in cats[idx]:
+                                pred_class = cats[idx]
 
                 with self.lock:
-                    self._pred_class = pred_class
-                    self._confidence = conf
                     self._hand_count = num_hands
+                    if pred_class is not None:
+                        self._pred_class = pred_class
+                        self._confidence = conf
             except Exception:
                 pass
             return av.VideoFrame.from_ndarray(img, format="bgr24")
@@ -564,19 +571,19 @@ if mode == 'Sign Language to Text':
                     else:
                         st.session_state.stable_count = 0
 
-            time.sleep(0.05)
+            time.sleep(0.3)
             st.rerun()
     elif st.session_state.desired_playing:
         st.session_state.cam_status = "Connecting..."
         if 'connect_attempts' not in st.session_state:
             st.session_state.connect_attempts = 0
         st.session_state.connect_attempts += 1
-        if st.session_state.connect_attempts > 30:
+        if st.session_state.connect_attempts > 10:
             st.session_state.cam_status = "Connection failed"
             st.session_state.desired_playing = False
             st.session_state.connect_attempts = 0
         else:
-            time.sleep(0.5)
+            time.sleep(2.0)
             st.rerun()
 
 else:
