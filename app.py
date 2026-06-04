@@ -84,6 +84,12 @@ st.markdown("""
     .stSuccess, .stError, .stInfo {
         border-radius: 8px !important;
     }
+    video {
+        width: 100%;
+        border-radius: 8px;
+        border: 2px solid #2A2F3E;
+        background: #1E2230;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -356,63 +362,66 @@ if mode == 'Sign Language to Text':
 
         def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
             img = frame.to_ndarray(format="bgr24")
-            hands = self._get_hands()
-            m = load_model()
-            cats = get_categories()
-            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            result = hands.process(rgb)
-            h, w, _ = img.shape
-            pred_class = None
-            conf = 0.0
-            num_hands = 0
+            try:
+                hands = self._get_hands()
+                m = load_model()
+                cats = get_categories()
+                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                result = hands.process(rgb)
+                h, w, _ = img.shape
+                pred_class = None
+                conf = 0.0
+                num_hands = 0
 
-            if result.multi_hand_landmarks:
-                num_hands = len(result.multi_hand_landmarks)
-                hand_boxes = []
-                all_x, all_y = [], []
-                mp_drawing = mp.solutions.drawing_utils
-                for lm in result.multi_hand_landmarks:
-                    xs = [l.x * w for l in lm.landmark]
-                    ys = [l.y * h for l in lm.landmark]
-                    all_x.extend(xs); all_y.extend(ys)
-                    area = (max(xs) - min(xs)) * (max(ys) - min(ys))
-                    hand_boxes.append((min(xs), min(ys), max(xs), max(ys), area, lm))
-                    mp_drawing.draw_landmarks(
-                        img, lm, mp.solutions.hands.HAND_CONNECTIONS,
-                        mp_drawing.DrawingSpec(color=(79, 195, 247), thickness=1, circle_radius=2),
-                        mp_drawing.DrawingSpec(color=(2, 136, 209), thickness=1),
-                    )
-                pad = 25
-                bx1 = max(0, int(min(all_x) - pad))
-                by1 = max(0, int(min(all_y) - pad))
-                bx2 = min(w, int(max(all_x) + pad))
-                by2 = min(h, int(max(all_y) + pad))
-                cv2.rectangle(img, (bx1, by1), (bx2, by2), (79, 195, 247), 3)
-                label = f"Detected ({num_hands})"
-                cv2.putText(img, label, (bx1, by1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (79, 195, 247), 2)
-                dominant = max(hand_boxes, key=lambda b: b[4])
-                dom = dominant[5]
-                dxs = [l.x * w for l in dom.landmark]
-                dys = [l.y * h for l in dom.landmark]
-                hx1 = max(0, int(min(dxs) - pad))
-                hy1 = max(0, int(min(dys) - pad))
-                hx2 = min(w, int(max(dxs) + pad))
-                hy2 = min(h, int(max(dys) + pad))
-                roi = img[hy1:hy2, hx1:hx2]
-                if roi.size > 0:
-                    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                    resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
-                    arr = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
-                    pred = m.predict(arr, verbose=0)
-                    idx = np.argmax(pred)
-                    conf = float(np.max(pred) * 100)
-                    if "unknown" not in cats[idx]:
-                        pred_class = cats[idx]
+                if result.multi_hand_landmarks:
+                    num_hands = len(result.multi_hand_landmarks)
+                    hand_boxes = []
+                    all_x, all_y = [], []
+                    mp_drawing = mp.solutions.drawing_utils
+                    for lm in result.multi_hand_landmarks:
+                        xs = [l.x * w for l in lm.landmark]
+                        ys = [l.y * h for l in lm.landmark]
+                        all_x.extend(xs); all_y.extend(ys)
+                        area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+                        hand_boxes.append((min(xs), min(ys), max(xs), max(ys), area, lm))
+                        mp_drawing.draw_landmarks(
+                            img, lm, mp.solutions.hands.HAND_CONNECTIONS,
+                            mp_drawing.DrawingSpec(color=(79, 195, 247), thickness=1, circle_radius=2),
+                            mp_drawing.DrawingSpec(color=(2, 136, 209), thickness=1),
+                        )
+                    pad = 25
+                    bx1 = max(0, int(min(all_x) - pad))
+                    by1 = max(0, int(min(all_y) - pad))
+                    bx2 = min(w, int(max(all_x) + pad))
+                    by2 = min(h, int(max(all_y) + pad))
+                    cv2.rectangle(img, (bx1, by1), (bx2, by2), (79, 195, 247), 3)
+                    label = f"Detected ({num_hands})"
+                    cv2.putText(img, label, (bx1, by1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (79, 195, 247), 2)
+                    dominant = max(hand_boxes, key=lambda b: b[4])
+                    dom = dominant[5]
+                    dxs = [l.x * w for l in dom.landmark]
+                    dys = [l.y * h for l in dom.landmark]
+                    hx1 = max(0, int(min(dxs) - pad))
+                    hy1 = max(0, int(min(dys) - pad))
+                    hx2 = min(w, int(max(dxs) + pad))
+                    hy2 = min(h, int(max(dys) + pad))
+                    roi = img[hy1:hy2, hx1:hx2]
+                    if roi.size > 0:
+                        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                        resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
+                        arr = resized.reshape(-1, IMG_SIZE, IMG_SIZE, 1) / 255.0
+                        pred = m.predict(arr, verbose=0)
+                        idx = np.argmax(pred)
+                        conf = float(np.max(pred) * 100)
+                        if "unknown" not in cats[idx]:
+                            pred_class = cats[idx]
 
-            with self.lock:
-                self._pred_class = pred_class
-                self._confidence = conf
-                self._hand_count = num_hands
+                with self.lock:
+                    self._pred_class = pred_class
+                    self._confidence = conf
+                    self._hand_count = num_hands
+            except Exception:
+                pass
             return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         def get_state(self):
@@ -432,7 +441,19 @@ if mode == 'Sign Language to Text':
     st.markdown("### Live Sign Recognition")
     col_feed, col_info = st.columns([2, 1])
     with col_feed:
-        frame_holder = st.empty()
+            ctx = webrtc_streamer(
+                key="isl-realtime",
+                video_processor_factory=SignVideoProcessor,
+                mode=WebRtcMode.SENDRECV,
+                desired_playing_state=st.session_state.desired_playing,
+                media_stream_constraints={"video": True, "audio": False},
+                rtc_configuration={
+                    "iceServers": [
+                        {"urls": ["stun:stun.l.google.com:19302"]},
+                        {"urls": ["stun:stun1.l.google.com:19302"]},
+                    ]
+                },
+            )
     with col_info:
         st.markdown("**Recognition Info**")
         col = '🟢' if st.session_state.desired_playing else '🔴'
@@ -452,6 +473,7 @@ if mode == 'Sign Language to Text':
         if st.button("▶ Start Capture", use_container_width=True):
             st.session_state.desired_playing = True
             st.session_state.cam_status = "Starting..."
+            st.session_state.connect_attempts = 0
             st.session_state.pred_buffer = []
             st.session_state.conf_buffer = []
             st.session_state.stable_count = 0
@@ -489,17 +511,9 @@ if mode == 'Sign Language to Text':
     if st.session_state.audio_bytes:
         st.audio(st.session_state.audio_bytes, format='audio/mp3')
 
-    ctx = webrtc_streamer(
-        key="isl-realtime",
-        video_processor_factory=SignVideoProcessor,
-        mode=WebRtcMode.SENDRECV,
-        desired_playing_state=st.session_state.desired_playing,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
-
     if ctx.state.playing:
         st.session_state.cam_status = "Running"
+        st.session_state.connect_attempts = 0
         if ctx.video_processor:
             pred_class, conf, num_hands = ctx.video_processor.get_state()
             st.session_state.hand_status = f"Detected ({num_hands})" if num_hands > 0 else "No hands"
@@ -554,6 +568,16 @@ if mode == 'Sign Language to Text':
             st.rerun()
     elif st.session_state.desired_playing:
         st.session_state.cam_status = "Connecting..."
+        if 'connect_attempts' not in st.session_state:
+            st.session_state.connect_attempts = 0
+        st.session_state.connect_attempts += 1
+        if st.session_state.connect_attempts > 30:
+            st.session_state.cam_status = "Connection failed"
+            st.session_state.desired_playing = False
+            st.session_state.connect_attempts = 0
+        else:
+            time.sleep(0.5)
+            st.rerun()
 
 else:
     typed_text = st.text_input("Or type text to convert to sign language:", placeholder="e.g. hello world")
