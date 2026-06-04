@@ -351,6 +351,7 @@ if mode == 'Sign Language to Text':
             self._pred_class = None
             self._confidence = 0.0
             self._hand_count = 0
+            self._frame_count = 0
 
         def _get_hands(self):
             if self._hands is None:
@@ -459,13 +460,14 @@ if mode == 'Sign Language to Text':
             st.session_state[key] = default
 
     st.markdown("### Live Sign Recognition")
+    st.info("⬆️ The camera appears **above** this text. Click its **Start** button to activate.")
     col_feed, col_info = st.columns([2, 1])
     with col_feed:
-        st.markdown("Click **Start** below to turn on your camera")
         ctx = webrtc_streamer(
             key="isl-realtime",
             video_processor_factory=SignVideoProcessor,
-            mode=WebRtcMode.SENDRECV,
+            mode=WebRtcMode.SENDONLY,
+            async_processing=False,
             media_stream_constraints={
                 "video": {
                     "width": {"ideal": 480},
@@ -494,6 +496,7 @@ if mode == 'Sign Language to Text':
         st.markdown(f"**Confidence:** {c}")
         if st.session_state.cur_stability > 0:
             st.markdown(f"**Stability:** {st.session_state.cur_stability:.0%}")
+        st.caption(f"Component state: playing={ctx.state.playing}, inited={ctx.state.inited}, has_video={ctx.video_processor is not None}")
 
     st.text_area("Generated Text", value=st.session_state.sign_buffer, height=100, disabled=True)
 
