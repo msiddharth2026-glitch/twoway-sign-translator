@@ -453,7 +453,7 @@ if mode == 'Sign Language to Text':
         ('stable_count', 0), ('cooldown', 0), ('cur_sign', ''),
         ('cur_conf', 0.0), ('cur_stability', 0.0), ('hand_status', 'Waiting'),
         ('no_hand_frames', 0), ('audio_bytes', None), ('last_accepted', ''),
-        ('desired_playing', False), ('cam_status', 'Off'),
+        ('cam_status', 'Off'),
     ]:
         if key not in st.session_state:
             st.session_state[key] = default
@@ -461,30 +461,32 @@ if mode == 'Sign Language to Text':
     st.markdown("### Live Sign Recognition")
     col_feed, col_info = st.columns([2, 1])
     with col_feed:
-            ctx = webrtc_streamer(
-                key="isl-realtime",
-                video_processor_factory=SignVideoProcessor,
-                mode=WebRtcMode.SENDRECV,
-                desired_playing_state=st.session_state.desired_playing,
-                media_stream_constraints={
-                    "video": {
-                        "width": {"ideal": 480},
-                        "height": {"ideal": 360},
-                        "frameRate": {"ideal": 15},
-                    },
-                    "audio": False,
+        st.markdown("Click **Start** below to turn on your camera")
+        ctx = webrtc_streamer(
+            key="isl-realtime",
+            video_processor_factory=SignVideoProcessor,
+            mode=WebRtcMode.SENDRECV,
+            media_stream_constraints={
+                "video": {
+                    "width": {"ideal": 480},
+                    "height": {"ideal": 360},
+                    "frameRate": {"ideal": 15},
                 },
-                rtc_configuration={
-                    "iceServers": [
-                        {"urls": ["stun:stun.l.google.com:19302"]},
-                        {"urls": ["stun:stun1.l.google.com:19302"]},
-                    ]
-                },
-            )
+                "audio": False,
+            },
+            rtc_configuration={
+                "iceServers": [
+                    {"urls": ["stun:stun.l.google.com:19302"]},
+                    {"urls": ["stun:stun1.l.google.com:19302"]},
+                ]
+            },
+        )
     with col_info:
         st.markdown("**Recognition Info**")
-        col = '🟢' if st.session_state.desired_playing else '🔴'
-        st.markdown(f"**Camera:** {col} {st.session_state.cam_status}")
+        is_on = ctx.state.playing if hasattr(ctx.state, 'playing') else False
+        col = '🟢' if is_on else '🔴'
+        cam_label = "Running" if is_on else "Off"
+        st.markdown(f"**Camera:** {col} {cam_label}")
         st.markdown(f"**Hands:** {st.session_state.hand_status}")
         s = st.session_state.cur_sign if st.session_state.cur_sign else '—'
         st.markdown(f"**Sign:** {s}")
@@ -495,38 +497,13 @@ if mode == 'Sign Language to Text':
 
     st.text_area("Generated Text", value=st.session_state.sign_buffer, height=100, disabled=True)
 
-    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+    col_b1, col_b2 = st.columns(2)
     with col_b1:
-        if st.button("▶ Start Capture", use_container_width=True):
-            st.session_state.desired_playing = True
-            st.session_state.cam_status = "Starting..."
-            st.session_state.connect_attempts = 0
-            st.session_state.pred_buffer = []
-            st.session_state.conf_buffer = []
-            st.session_state.stable_count = 0
-            st.session_state.cooldown = 0
-            st.session_state.cur_sign = ''
-            st.session_state.cur_conf = 0.0
-            st.session_state.last_accepted = ''
-            st.session_state.hand_status = "Starting..."
-            st.rerun()
-    with col_b2:
-        if st.button("⏹ Stop Capture", use_container_width=True):
-            st.session_state.desired_playing = False
-            st.session_state.cam_status = "Off"
-            st.session_state.hand_status = "Stopped"
-            st.session_state.cur_sign = ''
-            st.session_state.cur_conf = 0.0
-            st.session_state.cur_stability = 0.0
-            st.session_state.pred_buffer = []
-            st.session_state.conf_buffer = []
-            st.rerun()
-    with col_b3:
         if st.button("🗑 Clear", use_container_width=True):
             st.session_state.sign_buffer = ''
             st.session_state.audio_bytes = None
             st.rerun()
-    with col_b4:
+    with col_b2:
         if st.button("🔊 Speak", use_container_width=True):
             if st.session_state.sign_buffer.strip():
                 tts = gTTS(text=st.session_state.sign_buffer, lang='en')
@@ -540,7 +517,6 @@ if mode == 'Sign Language to Text':
 
     if ctx.state.playing:
         st.session_state.cam_status = "Running"
-        st.session_state.connect_attempts = 0
         if ctx.video_processor:
             pred_class, conf, num_hands = ctx.video_processor.get_state()
             st.session_state.hand_status = f"Detected ({num_hands})" if num_hands > 0 else "No hands"
@@ -601,18 +577,6 @@ if mode == 'Sign Language to Text':
                 st.session_state._last_rerun = now
                 time.sleep(0.2)
                 st.rerun()
-    elif st.session_state.desired_playing:
-        st.session_state.cam_status = "Connecting..."
-        if 'connect_attempts' not in st.session_state:
-            st.session_state.connect_attempts = 0
-        st.session_state.connect_attempts += 1
-        if st.session_state.connect_attempts > 10:
-            st.session_state.cam_status = "Connection failed"
-            st.session_state.desired_playing = False
-            st.session_state.connect_attempts = 0
-        else:
-            time.sleep(2.0)
-            st.rerun()
 
 else:
     typed_text = st.text_input("Or type text to convert to sign language:", placeholder="e.g. hello world")
