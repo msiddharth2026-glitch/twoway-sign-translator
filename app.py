@@ -333,16 +333,16 @@ st.markdown("<h1 style='color:#4FC3F7;'>Sign & Speech Translator</h1>", unsafe_a
 mode = st.radio("Choose Mode:", ['Sign Language to Text', 'Speech to Sign'], horizontal=True)
 
 if mode == 'Sign Language to Text':
-    import mediapipe as mp
     from collections import Counter
     import base64
+    from mediapipe.python.solutions import hands as mp_hands, drawing_utils as mp_drawing
 
     BUFFER_SIZE = 8
     STABLE_THRESHOLD = 6
     COOLDOWN_FRAMES = 8
     NO_HAND_RESET = 5
 
-    _hands_cache = mp.solutions.hands.Hands(
+    _hands_cache = mp_hands.Hands(
         static_image_mode=False, max_num_hands=2,
         min_detection_confidence=0.6, min_tracking_confidence=0.5,
     )
@@ -359,7 +359,6 @@ if mode == 'Sign Language to Text':
             num_hands = len(result.multi_hand_landmarks)
             all_x, all_y = [], []
             hand_boxes = []
-            mp_drawing = mp.solutions.drawing_utils
             for lm in result.multi_hand_landmarks:
                 xs = [l.x * w for l in lm.landmark]
                 ys = [l.y * h for l in lm.landmark]
@@ -367,7 +366,7 @@ if mode == 'Sign Language to Text':
                 area = (max(xs) - min(xs)) * (max(ys) - min(ys))
                 hand_boxes.append((min(xs), min(ys), max(xs), max(ys), area, lm))
                 mp_drawing.draw_landmarks(
-                    annotated, lm, mp.solutions.hands.HAND_CONNECTIONS,
+                    annotated, lm, mp_hands.HAND_CONNECTIONS,
                     mp_drawing.DrawingSpec(color=(79, 195, 247), thickness=1, circle_radius=2),
                     mp_drawing.DrawingSpec(color=(2, 136, 209), thickness=1),
                 )
